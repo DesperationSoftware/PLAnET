@@ -18,9 +18,9 @@ function outstruc=planet(data,ustar_flag,depo_flag,params)
 % (params)can be provided by the user if there's the need to use different
 % model parameters from the ones derived by its original formulation.
 % In the latter case, params is a vector of 11 values specifying:
-% 1) Minimum Growth Temperature (캜)
-% 2) Maxmimum Growth Temperature (캜)
-% 3) Optimal Growth Temperature (캜)
+% 1) Minimum Growth Temperature (째C)
+% 2) Maxmimum Growth Temperature (째C)
+% 3) Optimal Growth Temperature (째C)
 % 4) Lower population boundary (CFU m-2)
 % 5) Upper population boundary (CFU m-2)
 % 6-8) three coefficients for the Gompertz equation governing upward fluxes
@@ -31,7 +31,7 @@ function outstruc=planet(data,ustar_flag,depo_flag,params)
 % The input data matrix has a specific format: it has a number of rows
 % corresponding to the number of observations and four columns each one
 % corresponding to a driving variable. The four columns are:
-% 1) Temperature (캜)
+% 1) Temperature (째C)
 % 2) Pressure (Pa)
 % 3) Wind Speed / u* (m/s)
 % 4) Leaf area index
@@ -88,6 +88,9 @@ function outstruc=planet(data,ustar_flag,depo_flag,params)
 % population is at its minimum, so it's advisable to have a dataset starting
 % in winter months when LAI is at its minimum. 
 %
+% PLAnET PATCH 1 (24/09/2018):
+% Corrected some small overflow errors in population computation (see
+% comments atl line 259)
 
 
 %% MODEL CONSTANTS
@@ -253,6 +256,14 @@ elseif pop(k)<kmin;
             % if the deposition flux is enough to go above threshold, then...
             pop(k)=popul+(popul.*growth(k))+Fn(k);
             dieout(k)=0;
+            % in the rare cases (<0.05% in the original dataset) that LAI
+            % goes very low decreasing kmax a lot and there is no growth,
+            % but a substantial deposition flux, this can overshoot kmax,
+            % we adjust here
+            if pop(k)> kmax;
+                pop(k)=kmax;
+            else
+            end
         elseif (kmin-popul-Fn(k))./popul>0;
            % if we have growth, we will adjust the growth rate to reach
            % kmin: we can make the assumption that when more space and 
@@ -269,18 +280,25 @@ else
 end
 
 % logic checks for errors in population
+ovflw(k)=0;
+undflw(k)=0;
 if pop(k)>kmax;
-    if abs(kmax-pop(k))<1e4*(min(abs(kmax),abs(pop(k))));
+    if abs(kmax-pop(k))<1e-4*(min(abs(kmax),abs(pop(k))));
+        ovflw(k)=0;
     else
-        error(['Population overflow @ k = ',num2str(k)]);
+        warning(['Population overflow @ k = ',num2str(k)]);
+        ovflw(k)=1;
     end
 elseif pop(k)<kmin;
-    if abs(kmin-pop(k))<1e4*(min(abs(kmin),abs(pop(k))));
+    if abs(kmin-pop(k))<1e-4*(min(abs(kmin),abs(pop(k))));
+        undflw(k)=0;
     else
-        error(['Population underflow @ k = ',num2str(k)]);
+        warning(['Population underflow @ k = ',num2str(k)]);
+        undflw(k)=1;
     end
 else
 end
+
 end
 %% OUTPUTS
 % let's put back fluxes in CFU m-2 s-1 by dividing it by the timestep d
@@ -291,6 +309,8 @@ removal=removal';
 % downward, positive fluxes upward. 
 Fn=-1*(Fn./d);Fn=Fn';
 Fd=Fd./d;Fd=Fd';
+
+
 
 outstruc.population=pop;
 outstruc.growth=growth;
@@ -304,6 +324,8 @@ outstruc.vimp=vimp;
 outstruc.vdep=vdep;
 outstruc.dflag=dflag;
 outstruc.dieout=dieout;
+outstruc.overflow=ovflw;
+outstruc.underflow=undflw;
 end
 
 function vg=settvel(d,T,P)
